@@ -16,9 +16,11 @@ Create videos from an idea using AI. Enter a movie concept, and the app generate
 
 ## How to Run
 
+1. Open terminal in an empty folder
+2. Run:
+
 ```bash
-git clone <repository-url>
-cd hw4
+git clone <repository-url> .
 npm install
 npm start
 ```
