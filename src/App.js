@@ -1,5 +1,14 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { generateScenes, generateImage, generateTTS, fetchElevenLabsVoices } from './services/gemini';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
+import {
+  generateScenes,
+  generateImage,
+  generateTTS,
+  fetchElevenLabsVoices,
+  translateNarrations as translateNarrationsAPI,
+  generateYouTubeTitle as genYouTubeTitleAPI,
+  generateYouTubeDescription as genYouTubeDescriptionAPI,
+  generateYouTubeThumbnail as genYouTubeThumbnailAPI,
+} from './services/gemini';
 import { assembleVideo } from './services/ffmpegService';
 import { createAssistantChat, sendAssistantMessage } from './services/apiService';
 import MovieInput from './components/MovieInput';
@@ -8,6 +17,7 @@ import AnimatedDots from './components/AnimatedDots';
 import SceneEditor from './components/SceneEditor';
 import VideoAssembly from './components/VideoAssembly';
 import ChatAssistant from './components/ChatAssistant';
+import YouTubeMetadata from './components/YouTubeMetadata';
 
 function getProjectName() {
   const now = new Date();
@@ -44,6 +54,15 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const assistantChatRef = useRef(null);
+  const [translatedNarrations, setTranslatedNarrations] = useState(null);
+  const [showTranslated, setShowTranslated] = useState(false);
+  const [translateLoading, setTranslateLoading] = useState(false);
+  const [youtubeTitle, setYoutubeTitle] = useState('');
+  const [youtubeDescription, setYoutubeDescription] = useState('');
+  const [youtubeThumbnailBlob, setYoutubeThumbnailBlob] = useState(null);
+  const [youtubeTitleLoading, setYoutubeTitleLoading] = useState(false);
+  const [youtubeDescriptionLoading, setYoutubeDescriptionLoading] = useState(false);
+  const [youtubeThumbnailLoading, setYoutubeThumbnailLoading] = useState(false);
 
   const handleGenerateScenes = useCallback(async () => {
     if (!movieIdea.trim()) return;
@@ -125,7 +144,96 @@ function App() {
     const normalized = args.scenes.map((s) => initialScene(s));
     setScenes(normalized);
     setProjectName(getProjectName());
+    setTranslatedNarrations(null);
   }, []);
+
+  const scriptSummary = useMemo(() => {
+    if (!scenes.length) return '';
+    return scenes
+      .map((s) => `Scene ${s.sceneNumber}: ${s.description || ''}\nNarration: ${s.narration || ''}`)
+      .join('\n\n');
+  }, [scenes]);
+
+  const handleTranslate = useCallback(
+    async (targetLanguage) => {
+      const narrations = scenes.map((s) => s.narration || '');
+      if (!narrations.some(Boolean)) return;
+      setTranslateLoading(true);
+      setError(null);
+      try {
+        const translated = await translateNarrationsAPI(targetLanguage, narrations);
+        setTranslatedNarrations(translated);
+        setShowTranslated(true);
+      } catch (err) {
+        setError(err?.message || 'Translation failed');
+      } finally {
+        setTranslateLoading(false);
+      }
+    },
+    [scenes]
+  );
+
+  const handleUpdateTranslatedNarration = useCallback((index, value) => {
+    setTranslatedNarrations((prev) => (prev ? prev.map((n, i) => (i === index ? value : n)) : null));
+  }, []);
+
+  const sceneImageBlobs = useMemo(() => scenes.map((s) => s.imageBlob).filter(Boolean), [scenes]);
+
+  const handleGenerateYouTubeTitle = useCallback(async () => {
+    if (!scriptSummary.trim()) return;
+    setYoutubeTitleLoading(true);
+    setError(null);
+    try {
+      const title = await genYouTubeTitleAPI(scriptSummary, sceneImageBlobs);
+      setYoutubeTitle(title);
+    } catch (err) {
+      setError(err?.message || 'Failed to generate title');
+    } finally {
+      setYoutubeTitleLoading(false);
+    }
+  }, [scriptSummary, sceneImageBlobs]);
+
+  const handleGenerateYouTubeDescription = useCallback(async () => {
+    if (!scriptSummary.trim()) return;
+    setYoutubeDescriptionLoading(true);
+    setError(null);
+    try {
+      const description = await genYouTubeDescriptionAPI(scriptSummary, sceneImageBlobs);
+      setYoutubeDescription(description);
+    } catch (err) {
+      setError(err?.message || 'Failed to generate description');
+    } finally {
+      setYoutubeDescriptionLoading(false);
+    }
+  }, [scriptSummary, sceneImageBlobs]);
+
+  const handleGenerateYouTubeThumbnail = useCallback(
+    async (modelId) => {
+      if (!scriptSummary.trim()) return;
+      setYoutubeThumbnailLoading(true);
+      setError(null);
+      try {
+        const blob = await genYouTubeThumbnailAPI(scriptSummary, sceneImageBlobs, modelId === 'expensive' ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image');
+        setYoutubeThumbnailBlob(blob);
+      } catch (err) {
+        setError(err?.message || 'Failed to generate thumbnail');
+      } finally {
+        setYoutubeThumbnailLoading(false);
+      }
+    },
+    [scriptSummary, sceneImageBlobs]
+  );
+
+  const handleChatTranslateNarrations = useCallback((args) => {
+    if (!args?.scenes?.length) return;
+    const next = Array(scenes.length).fill('');
+    for (const s of args.scenes) {
+      const idx = (s.sceneNumber || 0) - 1;
+      if (idx >= 0 && idx < next.length) next[idx] = s.narration ?? '';
+    }
+    setTranslatedNarrations(next);
+    setShowTranslated(true);
+  }, [scenes.length]);
 
   const handleChatSend = useCallback(
     async (message) => {
@@ -153,7 +261,18 @@ function App() {
             return next;
           });
         };
-        await sendAssistantMessage(chat, message, handleAssistantScript, anchorImages, onChunk);
+        await sendAssistantMessage(
+          chat,
+          message,
+          handleAssistantScript,
+          anchorImages,
+          onChunk,
+          scenes,
+          handleChatTranslateNarrations,
+          setYoutubeTitle,
+          setYoutubeDescription,
+          (blob) => setYoutubeThumbnailBlob(blob)
+        );
       } catch (err) {
         console.error('[AI Reel Maker] Error:', err);
         setChatMessages((prev) => {
@@ -171,7 +290,12 @@ function App() {
         setChatLoading(false);
       }
     },
-    [handleAssistantScript, anchorImages]
+    [
+      handleAssistantScript,
+      anchorImages,
+      scenes,
+      handleChatTranslateNarrations,
+    ]
   );
 
   const handleAssemble = useCallback(async () => {
@@ -257,6 +381,29 @@ function App() {
                 onGenerateImage={handleGenerateImage}
                 onGenerateAudio={handleGenerateAudio}
                 generating={generatingIndex}
+                translatedNarrations={translatedNarrations}
+                showTranslated={showTranslated}
+                onShowTranslatedChange={setShowTranslated}
+                onTranslate={handleTranslate}
+                translateLoading={translateLoading}
+                onUpdateTranslatedNarration={handleUpdateTranslatedNarration}
+              />
+            </section>
+
+            <section className="mb-8 p-6 rounded-xl bg-slate-800/50 border border-slate-700">
+              <h2 className="text-lg font-semibold text-slate-200 mb-4">YouTube Metadata</h2>
+              <YouTubeMetadata
+                scriptSummary={scriptSummary}
+                sceneImageBlobs={scenes.map((s) => s.imageBlob).filter(Boolean)}
+                onGenerateTitle={handleGenerateYouTubeTitle}
+                onGenerateDescription={handleGenerateYouTubeDescription}
+                onGenerateThumbnail={handleGenerateYouTubeThumbnail}
+                title={youtubeTitle}
+                description={youtubeDescription}
+                thumbnailBlob={youtubeThumbnailBlob}
+                titleLoading={youtubeTitleLoading}
+                descriptionLoading={youtubeDescriptionLoading}
+                thumbnailLoading={youtubeThumbnailLoading}
               />
             </section>
 

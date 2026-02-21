@@ -209,6 +209,103 @@ export async function generateTTS(text, provider = 'gemini', voice = 'Kore') {
   return generateTTSGemini(text, voice);
 }
 
+/**
+ * Translate an array of narration strings to a target language using AI.
+ * @param {string} targetLanguage - Target language name (e.g. "Spanish", "French")
+ * @param {string[]} narrations - Array of narration texts to translate
+ * @returns {Promise<string[]>} - Array of translated narrations (same order)
+ */
+export async function translateNarrations(targetLanguage, narrations) {
+  if (!ai) throw new Error('API key not configured');
+  if (!narrations?.length) return [];
+  const prompt = `You are a professional translator. Translate the following narration lines into ${targetLanguage}. Preserve any emotional or TTS tags in square brackets (e.g. [excited], [whispering]) exactly as they appear, and translate only the spoken text. Return a JSON array of strings in the same order, one string per line. Return ONLY the JSON array, no other text.\n\nNarrations:\n${narrations.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
+  const response = await ai.models.generateContent({
+    model: MODELS.text,
+    contents: [{ parts: [{ text: prompt }] }],
+  });
+  const text = response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!text) throw new Error('No translation response');
+  const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+/**
+ * Generate a YouTube title from script summary and optional scene images as context.
+ * @param {string} scriptSummary - Full script text (descriptions + narrations)
+ * @param {Array<Blob>} [sceneImageBlobs] - Optional scene images for visual context
+ * @returns {Promise<string>}
+ */
+export async function generateYouTubeTitle(scriptSummary, sceneImageBlobs = []) {
+  if (!ai) throw new Error('API key not configured');
+  const prompt = `Generate a single catchy YouTube video title (under 100 characters) for this reel. Use the script below and the attached scene images as context. Return ONLY the title text, no quotes or extra text.\n\nScript:\n${scriptSummary}`;
+  const parts = [{ text: prompt }];
+  for (const blob of (sceneImageBlobs || []).filter(Boolean).slice(0, 3)) {
+    const base64 = await blobToBase64(blob);
+    parts.push({ inlineData: { mimeType: blob.type || 'image/png', data: base64 } });
+  }
+  const response = await ai.models.generateContent({
+    model: MODELS.text,
+    contents: [{ parts }],
+  });
+  const title = response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  return title || 'Untitled';
+}
+
+/**
+ * Generate a YouTube description from script summary and optional scene images as context.
+ * @param {string} scriptSummary - Full script text
+ * @param {Array<Blob>} [sceneImageBlobs] - Optional scene images for visual context
+ * @returns {Promise<string>}
+ */
+export async function generateYouTubeDescription(scriptSummary, sceneImageBlobs = []) {
+  if (!ai) throw new Error('API key not configured');
+  const prompt = `Generate a YouTube video description (2-4 short paragraphs, engaging and SEO-friendly) for this reel. Use the script and attached scene images below. Return ONLY the description text.\n\nScript:\n${scriptSummary}`;
+  const parts = [{ text: prompt }];
+  for (const blob of (sceneImageBlobs || []).filter(Boolean).slice(0, 3)) {
+    const base64 = await blobToBase64(blob);
+    parts.push({ inlineData: { mimeType: blob.type || 'image/png', data: base64 } });
+  }
+  const response = await ai.models.generateContent({
+    model: MODELS.text,
+    contents: [{ parts }],
+  });
+  const desc = response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  return desc || '';
+}
+
+/**
+ * Generate a YouTube thumbnail image from script and optional scene images.
+ * @param {string} scriptSummary - Summary or full script for context
+ * @param {Array<Blob|null>} sceneImageBlobs - Optional scene images for style reference
+ * @param {string} modelId - 'gemini-2.5-flash-image' (cheap) or 'gemini-3-pro-image-preview' (expensive)
+ * @returns {Promise<Blob>}
+ */
+export async function generateYouTubeThumbnail(scriptSummary, sceneImageBlobs = [], modelId = 'gemini-2.5-flash-image') {
+  if (!ai) throw new Error('API key not configured');
+  const prompt = `Create a single, eye-catching YouTube thumbnail image for this video reel. The thumbnail should be vertical (9:16) or square, bold and click-worthy. Base it on this content:\n\n${scriptSummary}\n\nMake it visually striking with clear focal point, suitable for YouTube/Shorts.`;
+  const parts = [{ text: prompt }];
+  const refBlobs = (sceneImageBlobs || []).filter(Boolean).slice(0, 2);
+  for (const blob of refBlobs) {
+    const base64 = await blobToBase64(blob);
+    const mime = blob.type || 'image/png';
+    parts.push({ inlineData: { mimeType: mime, data: base64 } });
+  }
+  const response = await ai.models.generateContent({
+    model: modelId,
+    contents: [{ parts }],
+    config: { responseModalities: ['TEXT', 'IMAGE'] },
+  });
+  const outParts = response?.candidates?.[0]?.content?.parts || [];
+  for (const part of outParts) {
+    if (part.inlineData?.data) {
+      const bytes = Uint8Array.from(atob(part.inlineData.data), c => c.charCodeAt(0));
+      return new Blob([bytes], { type: part.inlineData.mimeType || 'image/png' });
+    }
+  }
+  throw new Error('No image in response');
+}
+
 function pcmToWav(pcm, sampleRate = 24000, numChannels = 1) {
   const bytesPerSample = 2;
   const blockAlign = numChannels * bytesPerSample;

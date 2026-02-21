@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import { generateYouTubeThumbnail as genThumbnail } from './gemini';
 
 const API_KEY = (process.env.REACT_APP_GEMINI_API_KEY || '').trim();
 const ai = API_KEY ? new GoogleGenAI({ apiKey: API_KEY }) : null;
@@ -19,10 +20,22 @@ async function blobToBase64(blob) {
 }
 
 /**
- * Tool definition for generateMovieScript.
- * Takes an object with a scenes array. Each scene has sceneNumber (int), description (string), narration (string).
+ * Build script context string from scenes for the AI.
+ * @param {Array<{sceneNumber, description, narration}>} scenes
+ * @returns {string}
  */
-export const movieTool = {
+function buildScriptContext(scenes) {
+  if (!scenes?.length) return '';
+  const lines = scenes.map(
+    (s) => `Scene ${s.sceneNumber}:\n  Description: ${s.description || '(none)'}\n  Narration: ${s.narration || '(none)'}`
+  );
+  return `Current movie script (use this to suggest improvements or reference specific scenes):\n\n${lines.join('\n\n')}`;
+}
+
+/**
+ * All chat tools: generateMovieScript, translateNarrations, generateYouTubeTitle, generateYouTubeDescription, generateYouTubeThumbnail.
+ */
+const chatTools = {
   functionDeclarations: [
     {
       name: 'generateMovieScript',
@@ -36,18 +49,9 @@ export const movieTool = {
             items: {
               type: Type.OBJECT,
               properties: {
-                sceneNumber: {
-                  type: Type.INTEGER,
-                  description: 'Scene number (1-based index)',
-                },
-                description: {
-                  type: Type.STRING,
-                  description: 'Vivid visual description for image generation',
-                },
-                narration: {
-                  type: Type.STRING,
-                  description: 'Narration text with optional TTS tags like [excited] or [whispering]',
-                },
+                sceneNumber: { type: Type.INTEGER, description: 'Scene number (1-based index)' },
+                description: { type: Type.STRING, description: 'Vivid visual description for image generation' },
+                narration: { type: Type.STRING, description: 'Narration text with optional TTS tags like [excited] or [whispering]' },
               },
               required: ['sceneNumber', 'description', 'narration'],
             },
@@ -56,8 +60,63 @@ export const movieTool = {
         required: ['scenes'],
       },
     },
+    {
+      name: 'translateNarrations',
+      description: 'Translates all scene narrations to a target language and updates the narration boxes in the app. Call when the user asks to translate (e.g. "Translate to Spanish").',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          targetLanguage: { type: Type.STRING, description: 'Target language name (e.g. Spanish, French)' },
+          scenes: {
+            type: Type.ARRAY,
+            description: 'Array of objects with sceneNumber and translated narration',
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                sceneNumber: { type: Type.INTEGER },
+                narration: { type: Type.STRING, description: 'Translated narration for this scene' },
+              },
+              required: ['sceneNumber', 'narration'],
+            },
+          },
+        },
+        required: ['targetLanguage', 'scenes'],
+      },
+    },
+    {
+      name: 'generateYouTubeTitle',
+      description: 'Generates a catchy YouTube video title. Pass the title you generate so it is displayed in the app.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: { title: { type: Type.STRING, description: 'Catchy title under 100 characters' } },
+        required: ['title'],
+      },
+    },
+    {
+      name: 'generateYouTubeDescription',
+      description: 'Generates a YouTube video description. Pass the description you generate so it is displayed in the app.',
+      parameters: {
+        type: Type.OBJECT,
+        properties: { description: { type: Type.STRING, description: 'Engaging SEO-friendly description' } },
+        required: ['description'],
+      },
+    },
+    {
+      name: 'generateYouTubeThumbnail',
+      description: 'Triggers thumbnail image generation in the app. Optionally pass imageModel: "cheap" or "expensive".',
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          imageModel: { type: Type.STRING, description: 'Optional: "cheap" or "expensive" image model' },
+        },
+        required: [],
+      },
+    },
   ],
 };
+
+/** @deprecated Use chatTools */
+export const movieTool = chatTools;
 
 /**
  * Create and return a chat session configured with the movie tool and system prompt.
@@ -73,7 +132,7 @@ export async function createAssistantChat() {
     model: 'gemini-2.5-flash',
     config: {
       systemInstruction,
-      tools: [movieTool],
+      tools: [chatTools],
       toolConfig: {
         functionCallingConfig: {
           mode: 'AUTO',
@@ -93,16 +152,22 @@ export async function createAssistantChat() {
  * @param {Function} onScript - Callback (args) => void when generateMovieScript is called
  * @param {Array<Blob|File|null>} [anchorImages] - Optional anchor images [image1, image2, image3] to include in context
  * @param {Function} [onChunk] - Callback (text) => void for streaming text as it arrives
+ * @param {Array<{sceneNumber, description, narration, imageBlob?}>} [scenes] - Current script for context and thumbnail
+ * @param {Function} [onTranslateNarrations] - Callback (args) => void for translateNarrations
+ * @param {Function} [onYouTubeTitle] - Callback (title) => void
+ * @param {Function} [onYouTubeDescription] - Callback (description) => void
+ * @param {Function} [onYouTubeThumbnail] - Callback (blob) => void
  * @returns {Promise<{text: string, functionCalled: boolean}>}
  */
-export async function sendAssistantMessage(chat, message, onScript, anchorImages = [], onChunk) {
+export async function sendAssistantMessage(chat, message, onScript, anchorImages = [], onChunk, scenes = [], onTranslateNarrations, onYouTubeTitle, onYouTubeDescription, onYouTubeThumbnail) {
   if (!chat) throw new Error('API key not configured');
   console.log('[AI Reel Maker] sendAssistantMessage called');
 
-  let messageContent = message;
+  const scriptContext = buildScriptContext(scenes);
+  let textPayload = scriptContext ? `${scriptContext}\n\n---\nUser message: ${message}` : message;
   const hasImages = anchorImages?.some((img) => img != null);
   if (hasImages) {
-    const parts = [{ text: `Here are my anchor images (image 1, 2, 3) for style reference:\n\n${message}` }];
+    const parts = [{ text: `Here are my anchor images (image 1, 2, 3) for style reference:\n\n${textPayload}` }];
     for (let i = 0; i < 3; i++) {
       const img = anchorImages[i];
       if (img) {
@@ -111,10 +176,10 @@ export async function sendAssistantMessage(chat, message, onScript, anchorImages
         parts.push({ inlineData: { mimeType: mime, data: base64 } });
       }
     }
-    messageContent = parts;
+    textPayload = parts;
   }
+  const messageContent = typeof textPayload === 'string' ? textPayload : textPayload;
 
-  // Use non-streaming: streaming + function calls can hang (API waits for function response before stream ends)
   const response = await chat.sendMessage({ message: messageContent });
 
   // Extract function calls - check both getter and parts (SDK structure can vary)
@@ -129,30 +194,46 @@ export async function sendAssistantMessage(chat, message, onScript, anchorImages
     .join('')
     .trim() || '';
 
-  console.log('[AI Reel Maker] hasFunctionCalls:', !!functionCalls?.length, '| functionCallNames:', functionCalls?.map((fc) => fc?.name) || [], '| textLength:', text?.length || 0);
   if (functionCalls && functionCalls.length > 0) {
-    console.log('[AI Reel Maker] Tool called:', functionCalls.map((fc) => ({ name: fc?.name, args: fc?.args })));
+    let confirmText = '';
     for (const fc of functionCalls) {
-      if (fc?.name === 'generateMovieScript' && fc?.args) {
-        console.log('[AI Reel Maker] Executing generateMovieScript, scenes count:', fc.args.scenes?.length);
-        onScript(fc.args);
+      const name = fc?.name;
+      const args = fc?.args || {};
+      if (name === 'generateMovieScript' && args.scenes) {
+        onScript(args);
+        confirmText = confirmText || 'I\'ve added the script to your scene editor. You can review and edit it there, then generate images and audio for each scene.';
+      } else if (name === 'translateNarrations' && args.targetLanguage && Array.isArray(args.scenes)) {
+        onTranslateNarrations?.(args);
+        confirmText = confirmText || `I've translated the narrations to ${args.targetLanguage}. The narration boxes are updated.`;
+      } else if (name === 'generateYouTubeTitle' && args.title) {
+        onYouTubeTitle?.(args.title);
+        confirmText = confirmText || 'I\'ve generated a YouTube title. Check the YouTube metadata section.';
+      } else if (name === 'generateYouTubeDescription' && args.description) {
+        onYouTubeDescription?.(args.description);
+        confirmText = confirmText || 'I\'ve generated a YouTube description. Check the YouTube metadata section.';
+      } else if (name === 'generateYouTubeThumbnail') {
+        const modelId = (args.imageModel === 'expensive') ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+        const scriptSummary = buildScriptContext(scenes) || 'Short video reel.';
+        const sceneBlobs = (scenes || []).map((s) => s.imageBlob).filter(Boolean);
+        try {
+          const blob = await genThumbnail(scriptSummary, sceneBlobs, modelId);
+          onYouTubeThumbnail?.(blob);
+          confirmText = confirmText || 'Thumbnail generated and displayed in the YouTube metadata section.';
+        } catch (err) {
+          console.error('[AI Reel Maker] Thumbnail generation failed:', err);
+          confirmText = confirmText || `Thumbnail generation failed: ${err?.message || 'Unknown error'}.`;
+        }
       }
     }
-    const confirmText = 'I\'ve added the script to your scene editor. You can review and edit it there, then generate images and audio for each scene.';
     onChunk?.(confirmText);
     return { text: confirmText, functionCalled: true };
   }
 
-  console.log('[AI Reel Maker] Text response (no tool call), length:', text?.length);
-
-  // Fallback: model sometimes outputs JSON as text instead of calling the tool - try to parse and apply
   const parsed = tryParseScriptFromText(text);
   if (parsed) {
-    console.log('[AI Reel Maker] Parsed script from text fallback, scenes count:', parsed.scenes?.length);
     onScript(parsed);
-    const confirmText = 'I\'ve added the script to your scene editor. You can review and edit it there, then generate images and audio for each scene.';
-    onChunk?.(confirmText);
-    return { text: confirmText, functionCalled: true };
+    onChunk?.('I\'ve added the script to your scene editor. You can review and edit it there, then generate images and audio for each scene.');
+    return { text: 'I\'ve added the script to your scene editor.', functionCalled: true };
   }
 
   onChunk?.(text);

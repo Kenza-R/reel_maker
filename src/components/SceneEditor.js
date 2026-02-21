@@ -2,6 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { IMAGE_MODELS, GEMINI_TTS_VOICES } from '../services/gemini';
 import AnimatedDots from './AnimatedDots';
 
+/** Target languages for translation (at least one per human-inhabited continent: Africa, Asia, Europe, N.America, S.America, Oceania) */
+export const TRANSLATION_LANGUAGES = [
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'fr', name: 'French' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'de', name: 'German' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'ar', name: 'Arabic' },
+  { code: 'zh', name: 'Mandarin Chinese' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'sw', name: 'Swahili' },
+  { code: 'mi', name: 'Māori' },
+];
+
 function AudioPlayer({ blob }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
@@ -17,10 +34,32 @@ function AudioPlayer({ blob }) {
   return <audio src={url} controls className="w-48 h-8" />;
 }
 
-export default function SceneEditor({ scenes, onUpdate, imageModel, onImageModelChange, voiceProvider, onVoiceProviderChange, voice, onVoiceChange, elevenLabsVoices, elevenLabsVoiceId, onElevenLabsVoiceChange, onGenerateImage, onGenerateAudio, generating }) {
+export default function SceneEditor({
+  scenes,
+  onUpdate,
+  imageModel,
+  onImageModelChange,
+  voiceProvider,
+  onVoiceProviderChange,
+  voice,
+  onVoiceChange,
+  elevenLabsVoices,
+  elevenLabsVoiceId,
+  onElevenLabsVoiceChange,
+  onGenerateImage,
+  onGenerateAudio,
+  generating,
+  translatedNarrations,
+  showTranslated,
+  onShowTranslatedChange,
+  onTranslate,
+  translateLoading,
+  onUpdateTranslatedNarration,
+}) {
   const isGenerating = generating !== null;
   const [enlargedImage, setEnlargedImage] = useState(null);
   const [enlargedUrl, setEnlargedUrl] = useState(null);
+  const [targetLanguage, setTargetLanguage] = useState(TRANSLATION_LANGUAGES[0].name);
 
   useEffect(() => {
     if (enlargedImage) {
@@ -57,10 +96,18 @@ export default function SceneEditor({ scenes, onUpdate, imageModel, onImageModel
               </td>
               <td className="py-2 px-2">
                 <textarea
-                  value={scene.narration}
-                  onChange={(e) => onUpdate(i, 'narration', e.target.value)}
+                  value={showTranslated && translatedNarrations && translatedNarrations[i] != null ? translatedNarrations[i] : scene.narration}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (showTranslated && translatedNarrations) {
+                      onUpdateTranslatedNarration?.(i, val);
+                    } else {
+                      onUpdate(i, 'narration', val);
+                    }
+                  }}
                   className="w-full min-w-[200px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-200 text-xs resize-y min-h-[80px]"
                   rows={4}
+                  placeholder={showTranslated && (!translatedNarrations || translatedNarrations[i] == null) ? 'Translate to see' : ''}
                 />
               </td>
               <td className="py-2 px-2">
@@ -112,7 +159,37 @@ export default function SceneEditor({ scenes, onUpdate, imageModel, onImageModel
           <img src={enlargedUrl} alt="" className="max-w-[90vw] max-h-[90vh] object-contain rounded" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
-      <div className="mt-3 flex flex-wrap items-center gap-4">
+      <div className="mt-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-4 p-3 rounded-lg bg-slate-800/50 border border-slate-600">
+          <span className="text-slate-400 text-sm font-medium">Translation</span>
+          <select
+            value={targetLanguage}
+            onChange={(e) => setTargetLanguage(e.target.value)}
+            className="px-2 py-1 rounded bg-slate-700 border border-slate-600 text-slate-200 text-sm min-w-[160px]"
+          >
+            {TRANSLATION_LANGUAGES.map((lang) => (
+              <option key={lang.code} value={lang.name}>{lang.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onTranslate?.(targetLanguage)}
+            disabled={translateLoading || !scenes.length || scenes.every((s) => !s.narration?.trim())}
+            className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm"
+          >
+            {translateLoading ? <AnimatedDots prefix="Translating" /> : 'Translate'}
+          </button>
+          <label className="flex items-center gap-2 text-slate-300 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!showTranslated}
+              onChange={(e) => onShowTranslatedChange?.(e.target.checked)}
+              className="rounded border-slate-500 text-amber-500 focus:ring-amber-500"
+            />
+            View translated
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
           <span className="text-slate-400 text-sm">Image model:</span>
           <select
@@ -165,6 +242,7 @@ export default function SceneEditor({ scenes, onUpdate, imageModel, onImageModel
               )}
             </select>
           )}
+        </div>
         </div>
       </div>
     </div>
