@@ -20,20 +20,22 @@ async function blobToBase64(blob) {
 }
 
 /**
- * Build script context string from scenes for the AI.
- * @param {Array<{sceneNumber, description, narration}>} scenes
- * @returns {string}
+ * HW4 Task 1: Build full current script (all scenes: description, narration original, narration translated if present)
+ * for injection into chat so the AI can reference and suggest improvements to specific content.
  */
 function buildScriptContext(scenes) {
   if (!scenes?.length) return '';
-  const lines = scenes.map(
-    (s) => `Scene ${s.sceneNumber}:\n  Description: ${s.description || '(none)'}\n  Narration: ${s.narration || '(none)'}`
-  );
-  return `Current movie script (use this to suggest improvements or reference specific scenes):\n\n${lines.join('\n\n')}`;
+  const lines = scenes.map((s) => {
+    let block = `Scene ${s.sceneNumber}:\n  Description: ${s.description || '(none)'}\n  Narration (original): ${s.narration || '(none)'}`;
+    if (s.narrationTranslated) block += `\n  Narration (translated): ${s.narrationTranslated}`;
+    return block;
+  });
+  return `CURRENT SCRIPT:\n\n${lines.join('\n\n')}`;
 }
 
 /**
- * All chat tools: generateMovieScript, translateNarrations, generateYouTubeTitle, generateYouTubeDescription, generateYouTubeThumbnail.
+ * HW4 Tasks 4-7: Chat tools. Every tool has its purpose/params defined here AND in public/chat_prompt.txt.
+ * Task 4: translateNarrations. Task 5: generateYouTubeTitle. Task 6: generateYouTubeDescription. Task 7: generateYouTubeThumbnail.
  */
 const chatTools = {
   functionDeclarations: [
@@ -61,30 +63,35 @@ const chatTools = {
       },
     },
     {
-      name: 'translateNarrations',
-      description: 'Translates all scene narrations to a target language and updates the narration boxes in the app. Call when the user asks to translate (e.g. "Translate to Spanish").',
+      name: 'translateNarrations', /* HW4 Task 4 */
+      description: 'Translates all scene narrations to a target language and updates the narration boxes. Call when the user asks to translate (e.g. "Translate to Spanish"). Pass either translatedNarrations (array of strings, same order as scenes) or scenes (array of { sceneNumber, narration }).',
       parameters: {
         type: Type.OBJECT,
         properties: {
           targetLanguage: { type: Type.STRING, description: 'Target language name (e.g. Spanish, French)' },
+          translatedNarrations: {
+            type: Type.ARRAY,
+            description: 'Array of translated narration strings in same order as scenes',
+            items: { type: Type.STRING },
+          },
           scenes: {
             type: Type.ARRAY,
-            description: 'Array of objects with sceneNumber and translated narration',
+            description: 'Alternative: array of { sceneNumber, narration } with translated text',
             items: {
               type: Type.OBJECT,
               properties: {
                 sceneNumber: { type: Type.INTEGER },
-                narration: { type: Type.STRING, description: 'Translated narration for this scene' },
+                narration: { type: Type.STRING },
               },
               required: ['sceneNumber', 'narration'],
             },
           },
         },
-        required: ['targetLanguage', 'scenes'],
+        required: ['targetLanguage'],
       },
     },
     {
-      name: 'generateYouTubeTitle',
+      name: 'generateYouTubeTitle', /* HW4 Task 5 */
       description: 'Generates a catchy YouTube video title. Pass the title you generate so it is displayed in the app.',
       parameters: {
         type: Type.OBJECT,
@@ -93,7 +100,7 @@ const chatTools = {
       },
     },
     {
-      name: 'generateYouTubeDescription',
+      name: 'generateYouTubeDescription', /* HW4 Task 6 */
       description: 'Generates a YouTube video description. Pass the description you generate so it is displayed in the app.',
       parameters: {
         type: Type.OBJECT,
@@ -102,12 +109,13 @@ const chatTools = {
       },
     },
     {
-      name: 'generateYouTubeThumbnail',
-      description: 'Triggers thumbnail image generation in the app. Optionally pass imageModel: "cheap" or "expensive".',
+      name: 'generateYouTubeThumbnail', /* HW4 Task 7 */
+      description: 'Triggers thumbnail image generation in the app. Pass prompt (visual description for thumbnail) and/or modelTier "cheap" or "expensive". Output is displayed in the app.',
       parameters: {
         type: Type.OBJECT,
         properties: {
-          imageModel: { type: Type.STRING, description: 'Optional: "cheap" or "expensive" image model' },
+          prompt: { type: Type.STRING, description: 'Optional: visual description for the thumbnail image' },
+          modelTier: { type: Type.STRING, description: 'Optional: "cheap" or "expensive" for image model' },
         },
         required: [],
       },
@@ -163,8 +171,9 @@ export async function sendAssistantMessage(chat, message, onScript, anchorImages
   if (!chat) throw new Error('API key not configured');
   console.log('[AI Reel Maker] sendAssistantMessage called');
 
+  /* HW4 Task 1: Full script injected into every message so AI can critique/reference specific scenes */
   const scriptContext = buildScriptContext(scenes);
-  let textPayload = scriptContext ? `${scriptContext}\n\n---\nUser message: ${message}` : message;
+  let textPayload = scriptContext ? `${scriptContext}\n\nUSER MESSAGE:\n${message}` : message;
   const hasImages = anchorImages?.some((img) => img != null);
   if (hasImages) {
     const parts = [{ text: `Here are my anchor images (image 1, 2, 3) for style reference:\n\n${textPayload}` }];
@@ -202,8 +211,12 @@ export async function sendAssistantMessage(chat, message, onScript, anchorImages
       if (name === 'generateMovieScript' && args.scenes) {
         onScript(args);
         confirmText = confirmText || 'I\'ve added the script to your scene editor. You can review and edit it there, then generate images and audio for each scene.';
-      } else if (name === 'translateNarrations' && args.targetLanguage && Array.isArray(args.scenes)) {
-        onTranslateNarrations?.(args);
+      } else if (name === 'translateNarrations' && args.targetLanguage) {
+        if (Array.isArray(args.translatedNarrations)) {
+          onTranslateNarrations?.({ targetLanguage: args.targetLanguage, translatedNarrations: args.translatedNarrations });
+        } else if (Array.isArray(args.scenes)) {
+          onTranslateNarrations?.(args);
+        }
         confirmText = confirmText || `I've translated the narrations to ${args.targetLanguage}. The narration boxes are updated.`;
       } else if (name === 'generateYouTubeTitle' && args.title) {
         onYouTubeTitle?.(args.title);
@@ -212,11 +225,13 @@ export async function sendAssistantMessage(chat, message, onScript, anchorImages
         onYouTubeDescription?.(args.description);
         confirmText = confirmText || 'I\'ve generated a YouTube description. Check the YouTube metadata section.';
       } else if (name === 'generateYouTubeThumbnail') {
-        const modelId = (args.imageModel === 'expensive') ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+        const tier = args.modelTier || args.imageModel || 'cheap';
+        const modelId = (tier === 'expensive') ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
         const scriptSummary = buildScriptContext(scenes) || 'Short video reel.';
+        const prompt = args.prompt && args.prompt.trim() ? args.prompt.trim() : scriptSummary;
         const sceneBlobs = (scenes || []).map((s) => s.imageBlob).filter(Boolean);
         try {
-          const blob = await genThumbnail(scriptSummary, sceneBlobs, modelId);
+          const blob = await genThumbnail(prompt, sceneBlobs, modelId);
           onYouTubeThumbnail?.(blob);
           confirmText = confirmText || 'Thumbnail generated and displayed in the YouTube metadata section.';
         } catch (err) {

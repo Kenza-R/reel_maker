@@ -49,17 +49,16 @@ export default function SceneEditor({
   onGenerateImage,
   onGenerateAudio,
   generating,
-  translatedNarrations,
+  translationLanguage,
+  onTranslationLanguageChange,
   showTranslated,
-  onShowTranslatedChange,
-  onTranslate,
-  translateLoading,
-  onUpdateTranslatedNarration,
+  onToggleShowTranslated,
+  onTranslateAllNarrations,
+  translating,
 }) {
   const isGenerating = generating !== null;
   const [enlargedImage, setEnlargedImage] = useState(null);
   const [enlargedUrl, setEnlargedUrl] = useState(null);
-  const [targetLanguage, setTargetLanguage] = useState(TRANSLATION_LANGUAGES[0].name);
 
   useEffect(() => {
     if (enlargedImage) {
@@ -96,18 +95,11 @@ export default function SceneEditor({
               </td>
               <td className="py-2 px-2">
                 <textarea
-                  value={showTranslated && translatedNarrations && translatedNarrations[i] != null ? translatedNarrations[i] : scene.narration}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (showTranslated && translatedNarrations) {
-                      onUpdateTranslatedNarration?.(i, val);
-                    } else {
-                      onUpdate(i, 'narration', val);
-                    }
-                  }}
+                  value={showTranslated ? (scene.narrationTranslated ?? '') : (scene.narration ?? '')}
+                  onChange={(e) => onUpdate(i, showTranslated ? 'narrationTranslated' : 'narration', e.target.value)}
                   className="w-full min-w-[200px] px-2 py-1 rounded bg-slate-800 border border-slate-600 text-slate-200 text-xs resize-y min-h-[80px]"
                   rows={4}
-                  placeholder={showTranslated && (!translatedNarrations || translatedNarrations[i] == null) ? 'Translate to see' : ''}
+                  placeholder={showTranslated && !scene.narrationTranslated ? 'Translate to see' : ''}
                 />
               </td>
               <td className="py-2 px-2">
@@ -159,12 +151,13 @@ export default function SceneEditor({
           <img src={enlargedUrl} alt="" className="max-w-[90vw] max-h-[90vh] object-contain rounded" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
+      {/* HW4 Task 2: Translation — dropdown (all continents), Translate button, Original vs Translated toggle */}
       <div className="mt-3 space-y-3">
         <div className="flex flex-wrap items-center gap-4 p-3 rounded-lg bg-slate-800/50 border border-slate-600">
           <span className="text-slate-400 text-sm font-medium">Translation</span>
           <select
-            value={targetLanguage}
-            onChange={(e) => setTargetLanguage(e.target.value)}
+            value={translationLanguage ?? TRANSLATION_LANGUAGES[0].name}
+            onChange={(e) => onTranslationLanguageChange?.(e.target.value)}
             className="px-2 py-1 rounded bg-slate-700 border border-slate-600 text-slate-200 text-sm min-w-[160px]"
           >
             {TRANSLATION_LANGUAGES.map((lang) => (
@@ -173,20 +166,22 @@ export default function SceneEditor({
           </select>
           <button
             type="button"
-            onClick={() => onTranslate?.(targetLanguage)}
-            disabled={translateLoading || !scenes.length || scenes.every((s) => !s.narration?.trim())}
+            onClick={() => onTranslateAllNarrations?.()}
+            disabled={translating || !scenes.length || scenes.every((s) => !s.narration?.trim())}
             className="px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm"
           >
-            {translateLoading ? <AnimatedDots prefix="Translating" /> : 'Translate'}
+            {translating ? <AnimatedDots prefix="Translating" /> : 'Translate'}
           </button>
           <label className="flex items-center gap-2 text-slate-300 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={!!showTranslated}
-              onChange={(e) => onShowTranslatedChange?.(e.target.checked)}
-              className="rounded border-slate-500 text-amber-500 focus:ring-amber-500"
-            />
-            View translated
+            <span className="text-slate-400">Show:</span>
+            <select
+              value={showTranslated ? 'translated' : 'original'}
+              onChange={(e) => onToggleShowTranslated?.(e.target.value === 'translated')}
+              className="px-2 py-1 rounded bg-slate-700 border border-slate-600 text-slate-200 text-sm"
+            >
+              <option value="original">Original</option>
+              <option value="translated">Translated</option>
+            </select>
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-4">

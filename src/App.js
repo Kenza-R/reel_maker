@@ -4,7 +4,7 @@ import {
   generateImage,
   generateTTS,
   fetchElevenLabsVoices,
-  translateNarrations as translateNarrationsAPI,
+  translateNarrationsBatch,
   generateYouTubeTitle as genYouTubeTitleAPI,
   generateYouTubeDescription as genYouTubeDescriptionAPI,
   generateYouTubeThumbnail as genYouTubeThumbnailAPI,
@@ -29,6 +29,7 @@ const initialScene = (item) => ({
   sceneNumber: item.sceneNumber ?? 0,
   description: item.description ?? '',
   narration: item.narration ?? '',
+  narrationTranslated: item.narrationTranslated ?? '',
   imageBlob: null,
   audioBlob: null,
 });
@@ -54,9 +55,9 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const assistantChatRef = useRef(null);
-  const [translatedNarrations, setTranslatedNarrations] = useState(null);
+  const [translationLanguage, setTranslationLanguage] = useState('English');
   const [showTranslated, setShowTranslated] = useState(false);
-  const [translateLoading, setTranslateLoading] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [youtubeTitle, setYoutubeTitle] = useState('');
   const [youtubeDescription, setYoutubeDescription] = useState('');
   const [youtubeThumbnailBlob, setYoutubeThumbnailBlob] = useState(null);
@@ -144,38 +145,39 @@ function App() {
     const normalized = args.scenes.map((s) => initialScene(s));
     setScenes(normalized);
     setProjectName(getProjectName());
-    setTranslatedNarrations(null);
   }, []);
 
   const scriptSummary = useMemo(() => {
     if (!scenes.length) return '';
     return scenes
-      .map((s) => `Scene ${s.sceneNumber}: ${s.description || ''}\nNarration: ${s.narration || ''}`)
+      .map((s) => {
+        let block = `Scene ${s.sceneNumber}:\nDescription: ${s.description || ''}\nNarration (original): ${s.narration || ''}`;
+        if (s.narrationTranslated) block += `\nNarration (translated): ${s.narrationTranslated}`;
+        return block;
+      })
       .join('\n\n');
   }, [scenes]);
 
-  const handleTranslate = useCallback(
-    async (targetLanguage) => {
+  const handleTranslateAllNarrations = useCallback(
+    async () => {
       const narrations = scenes.map((s) => s.narration || '');
       if (!narrations.some(Boolean)) return;
-      setTranslateLoading(true);
+      setTranslating(true);
       setError(null);
       try {
-        const translated = await translateNarrationsAPI(targetLanguage, narrations);
-        setTranslatedNarrations(translated);
+        const translated = await translateNarrationsBatch(narrations, translationLanguage);
+        setScenes((prev) =>
+          prev.map((s, i) => ({ ...s, narrationTranslated: translated[i] ?? '' }))
+        );
         setShowTranslated(true);
       } catch (err) {
         setError(err?.message || 'Translation failed');
       } finally {
-        setTranslateLoading(false);
+        setTranslating(false);
       }
     },
-    [scenes]
+    [scenes, translationLanguage]
   );
-
-  const handleUpdateTranslatedNarration = useCallback((index, value) => {
-    setTranslatedNarrations((prev) => (prev ? prev.map((n, i) => (i === index ? value : n)) : null));
-  }, []);
 
   const sceneImageBlobs = useMemo(() => scenes.map((s) => s.imageBlob).filter(Boolean), [scenes]);
 
@@ -225,15 +227,22 @@ function App() {
   );
 
   const handleChatTranslateNarrations = useCallback((args) => {
-    if (!args?.scenes?.length) return;
-    const next = Array(scenes.length).fill('');
-    for (const s of args.scenes) {
-      const idx = (s.sceneNumber || 0) - 1;
-      if (idx >= 0 && idx < next.length) next[idx] = s.narration ?? '';
-    }
-    setTranslatedNarrations(next);
+    if (Array.isArray(args.translatedNarrations) && args.translatedNarrations.length) {
+      setScenes((prev) =>
+        prev.map((s, i) => ({ ...s, narrationTranslated: args.translatedNarrations[i] ?? '' }))
+      );
+    } else if (Array.isArray(args.scenes) && args.scenes.length) {
+      setScenes((prev) => {
+        const next = prev.map((s) => ({ ...s, narrationTranslated: '' }));
+        for (const s of args.scenes) {
+          const idx = (s.sceneNumber || 0) - 1;
+          if (idx >= 0 && idx < next.length) next[idx] = { ...next[idx], narrationTranslated: s.narration ?? '' };
+        }
+        return next;
+      });
+    } else return;
     setShowTranslated(true);
-  }, [scenes.length]);
+  }, []);
 
   const handleChatSend = useCallback(
     async (message) => {
@@ -261,6 +270,7 @@ function App() {
             return next;
           });
         };
+        /* HW4 Task 1: scenes passed so script is loaded into chat context. Tasks 4-7: callbacks for translateNarrations, YouTube title/description/thumbnail */
         await sendAssistantMessage(
           chat,
           message,
@@ -364,6 +374,7 @@ function App() {
 
         {scenes.length > 0 && (
           <>
+            {/* HW4 Task 2: Translation Feature (UI) — dropdown, Translate button, Original/Translated toggle in SceneEditor below */}
             <section className="mb-8 p-6 rounded-xl bg-slate-800/50 border border-slate-700">
               <h2 className="text-lg font-semibold text-slate-200 mb-4">2. Edit Scenes</h2>
               <SceneEditor
@@ -381,15 +392,16 @@ function App() {
                 onGenerateImage={handleGenerateImage}
                 onGenerateAudio={handleGenerateAudio}
                 generating={generatingIndex}
-                translatedNarrations={translatedNarrations}
+                translationLanguage={translationLanguage}
+                onTranslationLanguageChange={setTranslationLanguage}
                 showTranslated={showTranslated}
-                onShowTranslatedChange={setShowTranslated}
-                onTranslate={handleTranslate}
-                translateLoading={translateLoading}
-                onUpdateTranslatedNarration={handleUpdateTranslatedNarration}
+                onToggleShowTranslated={setShowTranslated}
+                onTranslateAllNarrations={handleTranslateAllNarrations}
+                translating={translating}
               />
             </section>
 
+            {/* HW4 Task 3: YouTube Metadata Suite (UI) — Title & Description buttons (AI), Thumbnail dropdown + Generate Image */}
             <section className="mb-8 p-6 rounded-xl bg-slate-800/50 border border-slate-700">
               <h2 className="text-lg font-semibold text-slate-200 mb-4">YouTube Metadata</h2>
               <YouTubeMetadata

@@ -1,0 +1,26 @@
+HW4 Rubric — Where to find each requirement (map to 100 pts)
+============================================================
+
+1) Smart chat context (15 pts) — Generated script loaded into chat for critique/Q&A
+   • public/chat_prompt.txt — Top block "HW4 RUBRIC MAPPING" + "Smart Chat Context" section
+   • src/services/apiService.js — buildScriptContext(), sendAssistantMessage() injects scriptContext into every user message (line ~166-167)
+   • src/App.js — sendAssistantMessage(..., scenes, ...) passes current scenes so script is in context
+
+2) Translation Feature UI (20 pts) — Dropdown, Translate button, Original/Translated toggle
+   • src/components/SceneEditor.js — "HW4 Task 2" comment; Translation bar: dropdown (TRANSLATION_LANGUAGES), "Translate" button, "View translated" checkbox; narration textboxes show original or translated per toggle
+
+3) YouTube Metadata Suite UI (20 pts) — Title/Description (AI buttons), Thumbnail (dropdown + Generate Image)
+   • src/App.js — "HW4 Task 3" comment; <YouTubeMetadata /> section with title input + Generate Title, description textarea + Generate Description, thumbnail model dropdown (cheap/expensive) + Generate Image + image display
+   • src/components/YouTubeMetadata.js — Full UI component
+
+4) Chat tool: translateNarrations (15 pts)
+   • public/chat_prompt.txt — Tool "2) translateNarrations" with purpose and parameters
+   • src/services/apiService.js — chatTools.functionDeclarations name 'translateNarrations' (Task 4); handler in sendAssistantMessage calls onTranslateNarrations
+
+5) YouTube chat tools — title, description, thumbnail (20 pts total)
+   • public/chat_prompt.txt — Tools "3) generateYouTubeTitle", "4) generateYouTubeDescription", "5) generateYouTubeThumbnail" with purpose and parameters
+   • src/services/apiService.js — chatTools: generateYouTubeTitle (Task 5), generateYouTubeDescription (Task 6), generateYouTubeThumbnail (Task 7); handlers in sendAssistantMessage update app (setYoutubeTitle, setYoutubeDescription, onYouTubeThumbnail)
+
+6) Proper submission (10 pts) — Zip contains public/chat_prompt.txt + full src/
+   • public/chat_prompt.txt — present
+   • src/ — full directory with all components and services above

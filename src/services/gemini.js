@@ -210,15 +210,16 @@ export async function generateTTS(text, provider = 'gemini', voice = 'Kore') {
 }
 
 /**
- * Translate an array of narration strings to a target language using AI.
- * @param {string} targetLanguage - Target language name (e.g. "Spanish", "French")
+ * Batch translate narrations to a target language. Returns array of strings in same order.
+ * Preserves meaning, tone, and bracketed TTS tags like [whispering]. Returns ONLY valid JSON array.
  * @param {string[]} narrations - Array of narration texts to translate
- * @returns {Promise<string[]>} - Array of translated narrations (same order)
+ * @param {string} targetLanguageLabel - Target language (e.g. "French", "Mandarin Chinese")
+ * @returns {Promise<string[]>}
  */
-export async function translateNarrations(targetLanguage, narrations) {
+export async function translateNarrationsBatch(narrations, targetLanguageLabel) {
   if (!ai) throw new Error('API key not configured');
   if (!narrations?.length) return [];
-  const prompt = `You are a professional translator. Translate the following narration lines into ${targetLanguage}. Preserve any emotional or TTS tags in square brackets (e.g. [excited], [whispering]) exactly as they appear, and translate only the spoken text. Return a JSON array of strings in the same order, one string per line. Return ONLY the JSON array, no other text.\n\nNarrations:\n${narrations.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
+  const prompt = `You are a professional translator. Translate the following narration lines into ${targetLanguageLabel}. Preserve meaning and tone. Keep bracketed TTS/emotional tags (e.g. [excited], [whispering]) exactly unchanged. Do not add any commentary—return ONLY a valid JSON array of strings in the same order and length as the input.\n\nNarrations:\n${narrations.map((n, i) => `${i + 1}. ${n}`).join('\n')}`;
   const response = await ai.models.generateContent({
     model: MODELS.text,
     contents: [{ parts: [{ text: prompt }] }],
@@ -226,8 +227,20 @@ export async function translateNarrations(targetLanguage, narrations) {
   const text = response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
   if (!text) throw new Error('No translation response');
   const cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
-  const parsed = JSON.parse(cleaned);
-  return Array.isArray(parsed) ? parsed : [parsed];
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    throw new Error('Translation did not return valid JSON array');
+  }
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  if (arr.length !== narrations.length) throw new Error(`Translation returned ${arr.length} items, expected ${narrations.length}`);
+  return arr.map((s) => (typeof s === 'string' ? s : String(s ?? '')));
+}
+
+/** @deprecated Use translateNarrationsBatch(narrations, targetLanguage) */
+export async function translateNarrations(targetLanguage, narrations) {
+  return translateNarrationsBatch(narrations, targetLanguage);
 }
 
 /**
