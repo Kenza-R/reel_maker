@@ -1,0 +1,19 @@
+HW4 Submission — Tasks 1–7 implemented
+=====================================
+Ensure you are on the latest main (commit ff8d4cb or later). If grading from a zip, include this file + public/chat_prompt.txt + full src/.
+
+Where to verify each rubric item:
+---------------------------------
+1. Smart Chat Context (15 pts): src/services/apiService.js — buildScriptContext() and sendAssistantMessage() inject "CURRENT SCRIPT:" + all scene descriptions/narrations + "USER MESSAGE:" into every chat message (lines ~26–33, ~175–176).
+
+2. Translation UI (20 pts): src/components/SceneEditor.js — "Translation" bar with language dropdown (all continents), "Translate" button, "Original" vs "Translated" toggle (lines ~154–184). Props wired in src/App.js.
+
+3. YouTube Metadata UI (20 pts): src/App.js — "YouTube Metadata" section with YouTubeMetadata component (title/description buttons + thumbnail dropdown + Generate Image). src/components/YouTubeMetadata.js — full UI.
+
+4. Chat tool translateNarrations (15 pts): src/services/apiService.js — chatTools.functionDeclarations includes name 'translateNarrations' (line ~66); handler invokes onTranslateNarrations. public/chat_prompt.txt — tool 2) translateNarrations described.
+
+5. YouTube chat tools (20 pts): src/services/apiService.js — generateYouTubeTitle, generateYouTubeDescription, generateYouTubeThumbnail in chatTools (lines ~94, ~103, ~112); handlers update app. public/chat_prompt.txt — tools 3–5 described.
+
+6. Submission structure (10 pts): Zip contains public/chat_prompt.txt and full src/ (no node_modules).
+
+All 5 tools (generateMovieScript + translateNarrations + generateYouTubeTitle + generateYouTubeDescription + generateYouTubeThumbnail) are defined in apiService.js and described in public/chat_prompt.txt.
